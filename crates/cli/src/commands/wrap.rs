@@ -1,29 +1,27 @@
 use std::{
     ffi::OsString,
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::Command,
 };
 
 #[cfg(unix)]
 use std::os::unix::process::CommandExt as _;
 
-use clap::{ArgAction, Args};
+use clap::Args;
 use color_eyre::eyre::OptionExt;
 #[cfg(unix)]
 use color_eyre::eyre::bail;
-use me3_env::{CommandExt, GameVars, LauncherVars, TelemetryVars};
-use normpath::PathExt;
-use tempfile::NamedTempFile;
+use me3_env::{CommandExt, GameVars, LauncherVars};
 use tracing::info;
 
 use crate::{
     commands::{
-        common::{generate_attach_config, remap_slr_path},
+        common::{self, ModArgs},
         launch::{GameOptions, Selector},
         profile::ProfileOptions,
     },
     config::Config,
-    db::{profile::Profile, DbContext},
+    db::DbContext,
     Game,
 };
 
@@ -38,41 +36,8 @@ pub struct WrapArgs {
     #[clap(flatten)]
     profile_options: ProfileOptions,
 
-    /// Suspend the game until a debugger is attached.
-    #[clap(long("suspend"), action = ArgAction::SetTrue)]
-    suspend: bool,
-
-    /// Name of a profile in the me3 profile dir, or path to a ModProfile (TOML or JSON).
-    #[arg(
-        short('p'),
-        long("profile"),
-        help_heading = "Mod configuration",
-        value_hint = clap::ValueHint::FilePath,
-    )]
-    profile: Option<String>,
-
-    /// Path to package directory (asset override mod) [repeatable option]
-    #[arg(
-        long("package"),
-        action = ArgAction::Append,
-        help_heading = "Mod configuration",
-        value_hint = clap::ValueHint::DirPath,
-    )]
-    packages: Vec<PathBuf>,
-
-    /// Path to DLL file (native DLL mod) [repeatable option]
-    #[arg(
-        short('n'),
-        long("native"),
-        action = ArgAction::Append,
-        help_heading = "Mod configuration",
-        value_hint = clap::ValueHint::FilePath,
-    )]
-    natives: Vec<PathBuf>,
-
-    /// Name of an alternative savefile to use (in the default savefile directory).
-    #[arg(long("savefile"), help_heading = "Mod configuration")]
-    savefile: Option<String>,
+    #[clap(flatten)]
+    mod_args: ModArgs,
 
     /// The Steam %command% to wrap. Usage: me3 wrap [OPTIONS] -- %command%
     #[arg(last = true, required = true)]
@@ -142,60 +107,33 @@ pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result
         .get(&game.into())
         .and_then(|opts| opts.default_profile.as_deref());
 
-    let profile = if let Some(name) = args.profile.as_deref().or(default_profile) {
-        db.profiles.load(name)?
-    } else {
-        Profile::transient()
-    };
+    let profile = common::resolve_profile(&db, args.mod_args.profile.as_deref(), default_profile)?;
 
     info!(?game, profile = profile.name(), "wrap: resolved game");
 
-    let game_options = config
-        .options
-        .game
-        .get(&game.into())
-        .cloned()
-        .unwrap_or_default()
-        .merge(args.game_options.clone());
+    let game_options = common::resolve_game_options(&config, game, args.game_options.clone());
 
     let profile_options = profile.options().merge(args.profile_options.clone());
 
-    let attach_config = generate_attach_config(
+    let attach_config = common::generate_attach_config(
         game,
         &game_options,
         &profile,
         &profile_options,
         config.cache_dir(),
-        &args.packages,
-        &args.natives,
-        args.savefile.as_deref(),
-        args.suspend,
+        &args.mod_args.packages,
+        &args.mod_args.natives,
+        args.mod_args.savefile.as_deref(),
+        args.mod_args.suspend,
     )?;
 
-    let attach_config_dir = config.cache_dir().unwrap_or(Box::from(Path::new(".")));
-    std::fs::create_dir_all(&attach_config_dir)?;
-    let attach_config_file = NamedTempFile::new_in(&attach_config_dir)?;
-    std::fs::write(&attach_config_file, toml::to_string_pretty(&attach_config)?)?;
     // On Unix, exec() replaces the process so the temp file is never cleaned up.
     // On Windows, the temp file is cleaned up when attach_config_path drops after wait().
-    let attach_config_path = attach_config_file.into_temp_path();
+    let attach_config_path = common::write_attach_config(&attach_config, config.cache_dir())?;
 
     info!(?attach_config_path, ?attach_config, "wrote attach config");
 
-    let bins_dir = config
-        .windows_binaries_dir()
-        .ok_or_eyre("can't find me3 Windows binaries directory")?;
-
-    let launcher_path = if cfg!(target_os = "linux") {
-        remap_slr_path(bins_dir.join("me3-launcher.exe"))
-    } else {
-        bins_dir.join("me3-launcher.exe")
-    };
-    let dll_path = if cfg!(target_os = "linux") {
-        remap_slr_path(bins_dir.join("me3_mod_host.dll"))
-    } else {
-        bins_dir.join("me3_mod_host.dll")
-    };
+    let (launcher_path, dll_path) = common::resolve_bin_paths(&config)?;
 
     let (exe_range, game_exe_path) = find_game_exe(&args.command)
         .ok_or_eyre("no .exe found in the passthrough command")?;
@@ -220,19 +158,10 @@ pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result
         host_config_path: attach_config_path.to_path_buf(),
     };
 
-    let log_file_path = db.logs.create_log_file(profile.name())?;
-    let log_file_path = log_file_path
-        .normalize()
-        .map(|p| p.into_path_buf())
-        .unwrap_or_else(|_| log_file_path.to_path_buf());
-
-    let telemetry_vars = TelemetryVars {
-        enabled: config.options.crash_reporting.unwrap_or_default(),
-        log_file_path,
-        // No monitor pipe needed: on Unix we exec(), on Windows we just wait.
-        monitor_pipe_path: PathBuf::from(if cfg!(windows) { "NUL" } else { "/dev/null" }),
-        trace_id: me3_telemetry::trace_id(),
-    };
+    // No monitor pipe needed: on Unix we exec(), on Windows we just wait.
+    let null_path = PathBuf::from(if cfg!(windows) { "NUL" } else { "/dev/null" });
+    let (telemetry_vars, _log_file_path) =
+        common::build_telemetry_vars(&config, &db, profile.name(), null_path)?;
 
     let game_vars: GameVars = game.into_vars();
 
@@ -295,7 +224,7 @@ mod tests {
             panic!("expected Wrap command");
         };
 
-        assert_eq!(wrap_args.profile.as_deref(), Some("my-profile"));
+        assert_eq!(wrap_args.mod_args.profile.as_deref(), Some("my-profile"));
         assert_eq!(wrap_args.command.len(), 10);
         assert_eq!(
             wrap_args.command.last().unwrap(),
