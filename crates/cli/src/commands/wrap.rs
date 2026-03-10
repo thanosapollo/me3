@@ -18,7 +18,8 @@ use tracing::info;
 
 use crate::{
     commands::{
-        launch::{generate_attach_config, remap_slr_path, GameOptions, Selector},
+        common::{generate_attach_config, remap_slr_path},
+        launch::{GameOptions, Selector},
         profile::ProfileOptions,
     },
     config::Config,
