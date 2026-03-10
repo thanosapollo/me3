@@ -1,0 +1,61 @@
+id: com.valvesoftware.Steam.Utility.me3
+runtime: com.valvesoftware.Steam
+runtime-version: stable
+sdk: org.freedesktop.Sdk//25.08
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+branch: stable
+build-extension: true
+appstream-compose: false
+
+build-options:
+  prefix: /app/utils/me3
+  prepend-path: /app/utils/me3/bin
+
+modules:
+  - name: me3-windows-binaries
+    buildsystem: simple
+    build-commands:
+      - install -Dm0755 bin/win64/me3-launcher.exe ${FLATPAK_DEST}/bin/win64/me3-launcher.exe
+      - install -Dm0755 bin/win64/me3_mod_host.dll ${FLATPAK_DEST}/bin/win64/me3_mod_host.dll
+      - install -Dm0755 bin/win64/me3.exe ${FLATPAK_DEST}/bin/win64/me3.exe
+    sources:
+      - type: archive
+        url: https://github.com/garyttierney/me3/releases/download/v0.11.0/me3-linux-amd64.tar.gz
+        sha256: 0feb090f710dd00854c163e6989a7b6bd9153041107c7c6841bf7a3ad4ed8d97
+        strip-components: 0
+
+  - name: me3
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/me3/cargo
+        CARGO_NET_OFFLINE: "true"
+        RUSTC_BOOTSTRAP: "1"
+    build-commands:
+      - cargo --offline build --release --locked --target x86_64-unknown-linux-gnu -p me3-cli
+      - install -Dm0755 target/x86_64-unknown-linux-gnu/release/me3 ${FLATPAK_DEST}/bin/me3-bin
+      - |
+        cat > ${FLATPAK_DEST}/bin/me3 <<'WRAPPER'
+        #!/bin/bash
+        # Wrapper to ensure me3 runs as a child process, not PID 1.
+        # pressure-vessel/bubblewrap crash when the game launcher is the main process.
+        exec /app/utils/me3/bin/me3-bin "$@"
+        WRAPPER
+      - chmod 755 ${FLATPAK_DEST}/bin/me3
+      - install -Dm0644 distribution/cross-platform/eldenring-default.me3 ${FLATPAK_DEST}/share/me3/profiles/eldenring-default.me3
+      - install -Dm0644 distribution/cross-platform/nightreign-default.me3 ${FLATPAK_DEST}/share/me3/profiles/nightreign-default.me3
+      - install -Dm0644 distribution/cross-platform/sekiro-default.me3 ${FLATPAK_DEST}/share/me3/profiles/sekiro-default.me3
+    sources:
+      - type: dir
+        path: ..
+      - generated-sources.json
+
+  - name: metadata
+    buildsystem: simple
+    build-commands:
+      - install -Dm0644 com.valvesoftware.Steam.Utility.me3.metainfo.xml ${FLATPAK_DEST}/share/metainfo/com.valvesoftware.Steam.Utility.me3.metainfo.xml
+    sources:
+      - type: dir
+        path: .

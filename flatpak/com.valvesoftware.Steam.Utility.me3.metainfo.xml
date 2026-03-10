@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="addon">
+  <id>com.valvesoftware.Steam.Utility.me3</id>
+  <extends>
+    <id>com.valvesoftware.Steam</id>
+  </extends>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT AND Apache-2.0</project_license>
+  <name>me3</name>
+  <summary>Mod framework for FromSoftware games</summary>
+  <description>
+    <p>me3 is a mod framework for FromSoftware games including Dark Souls 3,
+    Sekiro, Elden Ring, Armored Core VI, and Elden Ring Nightreign.</p>
+    <p>It manages mod profiles and launches games via Proton with DLL injection
+    for filesystem-level mod loading on Linux.</p>
+  </description>
+  <url type="homepage">https://github.com/garyttierney/me3</url>
+  <url type="bugtracker">https://github.com/garyttierney/me3/issues</url>
+  <developer id="io.github.garyttierney">
+    <name>Gary Tierney</name>
+  </developer>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.11.0" date="2026-02-28" />
+  </releases>
+</component>
