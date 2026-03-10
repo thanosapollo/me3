@@ -99,18 +99,16 @@ pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result
     })
     .ok_or_eyre("unable to determine game: use -g or ensure SteamAppId is set")?;
 
-    // Resolve profile: -p flag > config default_profile for this game > transient
-    let default_profile = config
-        .options
-        .game
-        .get(&game.into())
-        .and_then(|opts| opts.default_profile.as_deref());
+    let game_options = common::resolve_game_options(&config, game, args.game_options.clone());
 
-    let profile = common::resolve_profile(&db, args.mod_args.profile.as_deref(), default_profile)?;
+    // Resolve profile: -p flag > config default_profile for this game > transient
+    let profile = common::resolve_profile(
+        &db,
+        args.mod_args.profile.as_deref(),
+        game_options.default_profile.as_deref(),
+    )?;
 
     info!(?game, profile = profile.name(), "wrap: resolved game");
-
-    let game_options = common::resolve_game_options(&config, game, args.game_options.clone());
 
     let profile_options = profile.options().merge(args.profile_options.clone());
 
