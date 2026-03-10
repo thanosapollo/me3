@@ -43,3 +43,8 @@ out/
 # mkdocs
 /.cache/
 /site/
+
+# Flatpak
+repo/
+build-dir/
+.flatpak-builder/

@@ -114,12 +114,7 @@ fn find_game_exe(args: &[OsString]) -> Option<(std::ops::Range<usize>, PathBuf)>
 
 #[tracing::instrument(err, skip_all)]
 pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result<()> {
-    let profile = if let Some(profile_name) = &args.profile {
-        db.profiles.load(profile_name)?
-    } else {
-        Profile::transient()
-    };
-
+    // Resolve game first: -g flag > SteamAppId env var (set by Steam before expanding %command%)
     let game = if let Some(selector) = &args.target_selector {
         selector
             .game
@@ -127,14 +122,26 @@ pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result
     } else {
         None
     }
-    .or_else(|| profile.supported_game().map(crate::Game))
     .or_else(|| {
         std::env::var("SteamAppId")
             .ok()
             .and_then(|id| id.parse::<u32>().ok())
             .and_then(Game::from_app_id)
     })
-    .ok_or_eyre("unable to determine game: use -g, a profile with a game, or ensure SteamAppId is set")?;
+    .ok_or_eyre("unable to determine game: use -g or ensure SteamAppId is set")?;
+
+    // Resolve profile: -p flag > config default_profile for this game > transient
+    let default_profile = config
+        .options
+        .game
+        .get(&game.into())
+        .and_then(|opts| opts.default_profile.as_deref());
+
+    let profile = if let Some(name) = args.profile.as_deref().or(default_profile) {
+        db.profiles.load(name)?
+    } else {
+        Profile::transient()
+    };
 
     info!(?game, profile = profile.name(), "wrap: resolved game");
 

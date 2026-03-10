@@ -111,6 +111,10 @@ pub struct GameOptions {
     /// Custom path to the game executable.
     #[clap(short('e'), long, help_heading = "Game selection", value_hint = clap::ValueHint::FilePath)]
     pub(crate) exe: Option<PathBuf>,
+
+    /// Default profile to use when none is specified (for use in me3.toml).
+    #[clap(skip)]
+    pub(crate) default_profile: Option<String>,
 }
 
 fn invert_bool() -> MapValueParser<BoolValueParser, fn(bool) -> bool> {
@@ -124,6 +128,7 @@ impl GameOptions {
             skip_logos: other.skip_logos.or(self.skip_logos),
             skip_steam_init: other.skip_steam_init.or(self.skip_steam_init),
             exe: other.exe.or(self.exe),
+            default_profile: other.default_profile.or(self.default_profile),
         }
     }
 }
