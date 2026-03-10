@@ -57,7 +57,6 @@ struct LaunchContext {
     game: Game,
     profile: Profile,
     game_options: GameOptions,
-    profile_options: ProfileOptions,
     attach_config: AttachConfig,
 }
 
@@ -123,7 +122,6 @@ impl LaunchArgs {
             game,
             profile,
             game_options,
-            profile_options,
             attach_config,
         })
     }
@@ -231,7 +229,6 @@ pub fn launch(
         game,
         profile,
         game_options,
-        profile_options: _profile_options,
         attach_config,
     } = args.parse_with_context(&db, &config)?;
 
