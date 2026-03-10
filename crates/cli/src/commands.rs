@@ -6,7 +6,6 @@ pub mod info;
 pub mod launch;
 pub mod profile;
 
-#[cfg(target_os = "linux")]
 pub mod wrap;
 
 #[cfg(target_os = "windows")]
@@ -27,7 +26,6 @@ pub enum Commands {
     Profile(ProfileCommands),
 
     /// Wrap a Steam %command% to inject mods. Usage: me3 wrap [OPTIONS] -- %command%
-    #[cfg(target_os = "linux")]
     #[clap(disable_version_flag = true)]
     Wrap(wrap::WrapArgs),
 

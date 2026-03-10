@@ -1,12 +1,16 @@
 use std::{
     ffi::OsString,
-    os::unix::process::CommandExt as _,
     path::{Path, PathBuf},
     process::Command,
 };
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt as _;
+
 use clap::{ArgAction, Args};
-use color_eyre::eyre::{bail, OptionExt};
+use color_eyre::eyre::OptionExt;
+#[cfg(unix)]
+use color_eyre::eyre::bail;
 use me3_env::{CommandExt, GameVars, LauncherVars, TelemetryVars};
 use normpath::PathExt;
 use tempfile::NamedTempFile;
@@ -171,7 +175,8 @@ pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result
     std::fs::create_dir_all(&attach_config_dir)?;
     let attach_config_file = NamedTempFile::new_in(&attach_config_dir)?;
     std::fs::write(&attach_config_file, toml::to_string_pretty(&attach_config)?)?;
-    // TempPath deletes on drop, but exec() replaces the process before that happens.
+    // On Unix, exec() replaces the process so the temp file is never cleaned up.
+    // On Windows, the temp file is cleaned up when attach_config_path drops after wait().
     let attach_config_path = attach_config_file.into_temp_path();
 
     info!(?attach_config_path, ?attach_config, "wrote attach config");
@@ -180,8 +185,16 @@ pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result
         .windows_binaries_dir()
         .ok_or_eyre("can't find me3 Windows binaries directory")?;
 
-    let launcher_path = remap_slr_path(bins_dir.join("me3-launcher.exe"));
-    let dll_path = remap_slr_path(bins_dir.join("me3_mod_host.dll"));
+    let launcher_path = if cfg!(target_os = "linux") {
+        remap_slr_path(bins_dir.join("me3-launcher.exe"))
+    } else {
+        bins_dir.join("me3-launcher.exe")
+    };
+    let dll_path = if cfg!(target_os = "linux") {
+        remap_slr_path(bins_dir.join("me3_mod_host.dll"))
+    } else {
+        bins_dir.join("me3_mod_host.dll")
+    };
 
     let (exe_range, game_exe_path) = find_game_exe(&args.command)
         .ok_or_eyre("no .exe found in the passthrough command")?;
@@ -215,8 +228,8 @@ pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result
     let telemetry_vars = TelemetryVars {
         enabled: config.options.crash_reporting.unwrap_or_default(),
         log_file_path,
-        // No monitor pipe: we exec() so nobody reads it. /dev/null is safe.
-        monitor_pipe_path: PathBuf::from("/dev/null"),
+        // No monitor pipe needed: on Unix we exec(), on Windows we just wait.
+        monitor_pipe_path: PathBuf::from(if cfg!(windows) { "NUL" } else { "/dev/null" }),
         trace_id: me3_telemetry::trace_id(),
     };
 
@@ -233,9 +246,18 @@ pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result
 
     info!(?cmd, "wrap: exec command");
 
-    // exec() replaces this process entirely. On success, this never returns.
-    let err = cmd.exec();
-    bail!("exec failed: {err}")
+    #[cfg(unix)]
+    {
+        // exec() replaces this process entirely. On success, this never returns.
+        let err = cmd.exec();
+        bail!("exec failed: {err}")
+    }
+
+    #[cfg(windows)]
+    {
+        let status = cmd.spawn()?.wait()?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
 }
 
 #[cfg(test)]

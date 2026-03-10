@@ -140,7 +140,6 @@ fn main() {
         Commands::Launch(args) => {
             commands::launch::launch(db, config, args, tmp_log_file_path.clone())
         }
-        #[cfg(target_os = "linux")]
         Commands::Wrap(args) => commands::wrap::wrap(db, config, args),
         Commands::Profile(ProfileCommands::Create(args)) => commands::profile::create(config, args),
         Commands::Profile(ProfileCommands::List) => commands::profile::list(db),
