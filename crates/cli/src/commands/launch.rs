@@ -3,7 +3,6 @@ pub mod steam;
 pub mod strategy;
 
 use std::{
-    fmt::Debug,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::Stdio,
