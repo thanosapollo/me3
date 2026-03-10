@@ -1,14 +1,17 @@
 use std::path::{Path, PathBuf};
 
 use clap::{ArgAction, Args};
-use color_eyre::eyre::eyre;
+use color_eyre::eyre::{eyre, OptionExt};
+use me3_env::TelemetryVars;
 use me3_launcher_attach_protocol::AttachConfig;
 use me3_mod_protocol::{native::Native, package::Package};
 use normpath::PathExt;
+use tempfile::NamedTempFile;
 
 use crate::{
     commands::{launch::GameOptions, profile::ProfileOptions},
-    db::profile::Profile,
+    config::Config,
+    db::{profile::Profile, DbContext},
     Game,
 };
 
@@ -140,4 +143,77 @@ pub(crate) fn generate_attach_config(
         mem_patch: !profile_options.no_mem_patch.unwrap_or(false),
         skip_steam_init: opts.skip_steam_init.unwrap_or(false),
     })
+}
+
+pub(crate) fn resolve_profile(
+    db: &DbContext,
+    name: Option<&str>,
+    default_profile: Option<&str>,
+) -> color_eyre::Result<Profile> {
+    if let Some(name) = name.or(default_profile) {
+        db.profiles.load(name)
+    } else {
+        Ok(Profile::transient())
+    }
+}
+
+pub(crate) fn resolve_game_options(
+    config: &Config,
+    game: Game,
+    cli_overrides: GameOptions,
+) -> GameOptions {
+    config
+        .options
+        .game
+        .get(&game.into())
+        .cloned()
+        .unwrap_or_default()
+        .merge(cli_overrides)
+}
+
+pub(crate) fn write_attach_config(
+    attach_config: &AttachConfig,
+    cache_dir: Option<Box<Path>>,
+) -> color_eyre::Result<tempfile::TempPath> {
+    let dir = cache_dir.unwrap_or(Box::from(Path::new(".")));
+    std::fs::create_dir_all(&dir)?;
+    let file = NamedTempFile::new_in(&dir)?;
+    std::fs::write(&file, toml::to_string_pretty(attach_config)?)?;
+    Ok(file.into_temp_path())
+}
+
+pub(crate) fn resolve_bin_paths(config: &Config) -> color_eyre::Result<(PathBuf, PathBuf)> {
+    let bins_dir = config
+        .windows_binaries_dir()
+        .ok_or_eyre("can't find me3 Windows binaries directory")?;
+
+    let launcher = bins_dir.join("me3-launcher.exe");
+    let dll = bins_dir.join("me3_mod_host.dll");
+
+    #[cfg(target_os = "linux")]
+    let (launcher, dll) = (remap_slr_path(launcher), remap_slr_path(dll));
+
+    Ok((launcher, dll))
+}
+
+pub(crate) fn build_telemetry_vars(
+    config: &Config,
+    db: &DbContext,
+    profile_name: &str,
+    monitor_pipe_path: PathBuf,
+) -> color_eyre::Result<(TelemetryVars, PathBuf)> {
+    let log_file_path = db.logs.create_log_file(profile_name)?;
+    let log_file_path = log_file_path
+        .normalize()
+        .map(|p| p.into_path_buf())
+        .unwrap_or_else(|_| log_file_path.to_path_buf());
+
+    let vars = TelemetryVars {
+        enabled: config.options.crash_reporting.unwrap_or_default(),
+        log_file_path: log_file_path.clone(),
+        monitor_pipe_path,
+        trace_id: me3_telemetry::trace_id(),
+    };
+
+    Ok((vars, log_file_path))
 }
