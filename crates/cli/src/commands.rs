@@ -2,6 +2,7 @@ use clap::*;
 use launch::LaunchArgs;
 use profile::ProfileCommands;
 
+pub mod common;
 pub mod info;
 pub mod launch;
 pub mod profile;
