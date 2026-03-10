@@ -616,6 +616,7 @@ mod tests {
                 skip_logos: None,
                 skip_steam_init: None,
                 exe: None,
+                default_profile: None,
             },
         );
 
@@ -655,6 +656,7 @@ mod tests {
                 skip_logos: Some(false),
                 skip_steam_init: Some(true),
                 exe: None,
+                default_profile: None,
             },
         );
 
@@ -694,6 +696,7 @@ mod tests {
                 skip_logos: Some(true),
                 skip_steam_init: Some(false),
                 exe: None,
+                default_profile: None,
             },
         );
 
@@ -733,6 +736,7 @@ mod tests {
                 skip_logos: Some(false),
                 skip_steam_init: Some(true),
                 exe: None,
+                default_profile: None,
             },
         );
 
