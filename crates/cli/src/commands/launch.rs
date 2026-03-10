@@ -67,25 +67,43 @@ impl LaunchArgs {
         db: &DbContext,
         config: &Config,
     ) -> color_eyre::Result<LaunchContext> {
-        let profile = common::resolve_profile(db, self.mod_args.profile.as_deref(), None)?;
-
         let target_selector = self.target_selector.as_ref().unwrap_or(&Selector {
             auto_detect: true,
             game: None,
             steam_id: None,
         });
 
-        let game = if target_selector.auto_detect {
+        let explicit_game = if target_selector.auto_detect {
+            None
+        } else {
+            Some(
+                target_selector
+                    .game
+                    .or_else(|| target_selector.steam_id.and_then(Game::from_app_id))
+                    .ok_or_eyre("unable to determine game from name or app ID")?,
+            )
+        };
+
+        let default_profile = explicit_game.and_then(|game| {
+            config
+                .options
+                .game
+                .get(&game.into())
+                .and_then(|opts| opts.default_profile.as_deref())
+        });
+
+        let profile = common::resolve_profile(
+            db,
+            self.mod_args.profile.as_deref(),
+            default_profile,
+        )?;
+
+        let game = explicit_game.map(Ok).unwrap_or_else(|| {
             profile
                 .supported_game()
                 .map(crate::Game)
                 .ok_or_eyre("unable to determine which game to launch")
-        } else {
-            target_selector
-                .game
-                .or_else(|| target_selector.steam_id.and_then(Game::from_app_id))
-                .ok_or_eyre("unable to determine game from name or app ID")
-        }?;
+        })?;
 
         let game_options = common::resolve_game_options(config, game, self.game_options.clone());
         let profile_options = profile.options().merge(self.profile_options.clone());
