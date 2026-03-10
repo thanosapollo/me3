@@ -12,7 +12,8 @@ use tracing::error;
 
 use crate::{
     commands::{
-        launch::{steam::steamdir, GameOptions},
+        common::GameOptions,
+        launch::steam::steamdir,
         profile::no_profile_dir,
     },
     config::known_paths::OptionalPathExt,

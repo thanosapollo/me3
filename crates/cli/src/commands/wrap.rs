@@ -16,8 +16,7 @@ use tracing::info;
 
 use crate::{
     commands::{
-        common::{self, ModArgs},
-        launch::{GameOptions, Selector},
+        common::{self, GameOptions, ModArgs, Selector},
         profile::ProfileOptions,
     },
     config::Config,

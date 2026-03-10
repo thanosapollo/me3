@@ -1,19 +1,95 @@
 use std::path::{Path, PathBuf};
 
-use clap::{ArgAction, Args};
+use clap::{
+    builder::{BoolValueParser, MapValueParser, TypedValueParser},
+    ArgAction, Args,
+};
 use color_eyre::eyre::{eyre, OptionExt};
 use me3_env::TelemetryVars;
 use me3_launcher_attach_protocol::AttachConfig;
 use me3_mod_protocol::{native::Native, package::Package};
 use normpath::PathExt;
+use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
 use crate::{
-    commands::{launch::GameOptions, profile::ProfileOptions},
+    commands::profile::ProfileOptions,
     config::Config,
     db::{profile::Profile, DbContext},
     Game,
 };
+
+#[derive(Debug, clap::Args)]
+#[group(multiple = false)]
+pub struct Selector {
+    /// Detect the game to launch from mod profile.
+    #[clap(long, help_heading = "Game selection", action = ArgAction::SetTrue, required = false)]
+    pub(crate) auto_detect: bool,
+
+    /// Short name of a game to launch.
+    #[clap(
+        short('g'),
+        long,
+        hide_possible_values = false,
+        help_heading = "Game selection",
+        required = false
+    )]
+    #[arg(value_enum)]
+    pub(crate) game: Option<Game>,
+
+    /// Steam APPID of the game to launch.
+    #[clap(
+        short('s'),
+        long,
+        alias("steamid"),
+        help_heading = "Game selection",
+        required = false
+    )]
+    #[arg(value_parser = clap::value_parser!(u32))]
+    pub(crate) steam_id: Option<u32>,
+}
+
+#[derive(Args, Clone, Debug, Serialize, Deserialize, Default, PartialEq)]
+pub struct GameOptions {
+    /// Don't cache decrypted BHD files?
+    ///
+    /// BHD archives are decrypted every time a game is started, which takes significant time and
+    /// CPU. me3 caches the decrypted archives to reduce game startup time.
+    #[clap(long("no-boot-boost"), default_missing_value = "true", num_args=0..=1, value_parser = invert_bool())]
+    pub(crate) boot_boost: Option<bool>,
+
+    /// Show game intro logos?
+    #[clap(long("show-logos"), default_missing_value = "true", num_args=0..=1, value_parser = invert_bool())]
+    pub(crate) skip_logos: Option<bool>,
+
+    /// Skip initializing Steam within the launcher?
+    #[clap(long("skip-steam-init"), default_missing_value = "true", num_args=0..=1)]
+    pub(crate) skip_steam_init: Option<bool>,
+
+    /// Custom path to the game executable.
+    #[clap(short('e'), long, help_heading = "Game selection", value_hint = clap::ValueHint::FilePath)]
+    pub(crate) exe: Option<PathBuf>,
+
+    /// Default profile to use when none is specified (for use in me3.toml).
+    #[clap(skip)]
+    pub(crate) default_profile: Option<String>,
+}
+
+fn invert_bool() -> MapValueParser<BoolValueParser, fn(bool) -> bool> {
+    BoolValueParser::new().map(|v| !v)
+}
+
+impl GameOptions {
+    pub fn merge(self, other: Self) -> Self {
+        Self {
+            boot_boost: other.boot_boost.or(self.boot_boost),
+            skip_logos: other.skip_logos.or(self.skip_logos),
+            skip_steam_init: other.skip_steam_init.or(self.skip_steam_init),
+            exe: other.exe.or(self.exe),
+            default_profile: other.default_profile.or(self.default_profile),
+        }
+    }
+}
 
 #[derive(Args, Debug)]
 pub struct ModArgs {
