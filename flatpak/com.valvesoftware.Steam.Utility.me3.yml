@@ -39,9 +39,8 @@ modules:
       - |
         cat > ${FLATPAK_DEST}/bin/me3 <<'WRAPPER'
         #!/bin/bash
-        # Wrapper to ensure me3 runs as a child process, not PID 1.
-        # pressure-vessel/bubblewrap crash when the game launcher is the main process.
-        exec /app/utils/me3/bin/me3-bin "$@"
+        /app/utils/me3/bin/me3-bin "$@"
+        exit $?
         WRAPPER
       - chmod 755 ${FLATPAK_DEST}/bin/me3
       - install -Dm0644 distribution/cross-platform/eldenring-default.me3 ${FLATPAK_DEST}/share/me3/profiles/eldenring-default.me3
