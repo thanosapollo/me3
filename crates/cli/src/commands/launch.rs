@@ -4,7 +4,6 @@ pub mod strategy;
 
 use std::{
     fmt::Debug,
-    fs::File,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::Stdio,
@@ -18,18 +17,17 @@ use clap::{
     builder::{BoolValueParser, MapValueParser, TypedValueParser},
     ArgAction, Args,
 };
-use color_eyre::eyre::{bail, eyre, OptionExt};
-use me3_env::{CommandExt, LauncherVars, TelemetryVars};
+use color_eyre::eyre::OptionExt;
+use me3_env::{CommandExt, LauncherVars};
 use me3_launcher_attach_protocol::AttachConfig;
-use me3_mod_protocol::{native::Native, package::Package};
 use normpath::PathExt;
 use serde::{Deserialize, Serialize};
 use steamlocate::{Library, SteamDir};
-use tempfile::NamedTempFile;
 use tracing::{error, info};
 
 use crate::{
     commands::{
+        common::{self, ModArgs},
         launch::{
             named_pipe::NamedPipe,
             strategy::{compat_tool::CompatTools, LaunchStrategy},
@@ -128,41 +126,8 @@ pub struct LaunchArgs {
     #[clap(short('d'), long("diagnostics"), action = ArgAction::SetTrue)]
     diagnostics: bool,
 
-    /// Suspend the game until a debugger is attached.
-    #[clap(long("suspend"), action = ArgAction::SetTrue)]
-    suspend: bool,
-
-    /// Name of a profile in the me3 profile dir, or path to a ModProfile (TOML or JSON).
-    #[arg(
-            short('p'),
-            long("profile"),
-            help_heading = "Mod configuration",
-            value_hint = clap::ValueHint::FilePath,
-        )]
-    profile: Option<String>,
-
-    /// Path to package directory (asset override mod) [repeatable option]
-    #[arg(
-            long("package"),
-            action = clap::ArgAction::Append,
-            help_heading = "Mod configuration",
-            value_hint = clap::ValueHint::DirPath,
-        )]
-    packages: Vec<PathBuf>,
-
-    /// Path to DLL file (native DLL mod) [repeatable option]
-    #[arg(
-            short('n'),
-            long("native"),
-            action = clap::ArgAction::Append,
-            help_heading = "Mod configuration",
-            value_hint = clap::ValueHint::FilePath,
-        )]
-    natives: Vec<PathBuf>,
-
-    /// Name of an alternative savefile to use (in the default savefile directory).
-    #[arg(long("savefile"), help_heading = "Mod configuration")]
-    savefile: Option<String>,
+    #[clap(flatten)]
+    mod_args: ModArgs,
 }
 
 struct LaunchContext {
@@ -179,11 +144,7 @@ impl LaunchArgs {
         db: &DbContext,
         config: &Config,
     ) -> color_eyre::Result<LaunchContext> {
-        let profile = if let Some(profile_name) = &self.profile {
-            db.profiles.load(profile_name)?
-        } else {
-            Profile::transient()
-        };
+        let profile = common::resolve_profile(db, self.mod_args.profile.as_deref(), None)?;
 
         let target_selector = self.target_selector.as_ref().unwrap_or(&Selector {
             auto_detect: true,
@@ -203,24 +164,21 @@ impl LaunchArgs {
                 .ok_or_eyre("unable to determine game from name or app ID")
         }?;
 
-        let game_options = config
-            .options
-            .game
-            .get(&game.0)
-            .cloned()
-            .unwrap_or_default()
-            .merge(self.game_options.clone());
-
+        let game_options = common::resolve_game_options(config, game, self.game_options.clone());
         let profile_options = profile.options().merge(self.profile_options.clone());
 
         info!(?game, ?game_options, ?profile_options, "resolved game");
 
-        let attach_config = self.generate_attach_config(
+        let attach_config = common::generate_attach_config(
             game,
             &game_options,
             &profile,
             &profile_options,
             config.cache_dir(),
+            &self.mod_args.packages,
+            &self.mod_args.natives,
+            self.mod_args.savefile.as_deref(),
+            self.mod_args.suspend,
         )?;
 
         Ok(LaunchContext {
@@ -230,27 +188,6 @@ impl LaunchArgs {
             profile_options,
             attach_config,
         })
-    }
-
-    fn generate_attach_config(
-        &self,
-        game: Game,
-        opts: &GameOptions,
-        profile: &Profile,
-        profile_options: &ProfileOptions,
-        cache_path: Option<Box<Path>>,
-    ) -> color_eyre::Result<AttachConfig> {
-        super::common::generate_attach_config(
-            game,
-            opts,
-            profile,
-            profile_options,
-            cache_path,
-            &self.packages,
-            &self.natives,
-            self.savefile.as_deref(),
-            self.suspend,
-        )
     }
 }
 
@@ -360,22 +297,8 @@ pub fn launch(
         attach_config,
     } = args.parse_with_context(&db, &config)?;
 
-    let bins_dir = config
-        .windows_binaries_dir()
-        .ok_or_eyre("Can't find location of windows-binaries-dir")?;
-
+    let (launcher_path, dll_path) = common::resolve_bin_paths(&config)?;
     let app_id = game.app_id();
-    let launcher_path = if cfg!(target_os = "linux") {
-        super::common::remap_slr_path(bins_dir.join("me3-launcher.exe"))
-    } else {
-        bins_dir.join("me3-launcher.exe")
-    };
-
-    let dll_path = if cfg!(target_os = "linux") {
-        super::common::remap_slr_path(bins_dir.join("me3_mod_host.dll"))
-    } else {
-        bins_dir.join("me3_mod_host.dll")
-    };
 
     let game_executable = game_options
         .exe
@@ -401,17 +324,15 @@ pub fn launch(
     let launch_strategy = create_launch_strategy(&config, &game, &game_executable, &attach_config)?;
     let mut injector_command = launch_strategy.build_command(&launcher_path, vec![])?;
 
-    let attach_config_dir = config.cache_dir().unwrap_or(Box::from(Path::new(".")));
-    std::fs::create_dir_all(&attach_config_dir)?;
-    let attach_config_file = NamedTempFile::new_in(&attach_config_dir)?;
-
-    std::fs::write(&attach_config_file, toml::to_string_pretty(&attach_config)?)?;
-    info!(?attach_config_file, ?attach_config, "wrote attach config");
+    let attach_config_path = common::write_attach_config(&attach_config, config.cache_dir())?;
+    info!(?attach_config_path, ?attach_config, "wrote attach config");
 
     let mut monitor_pipe = NamedPipe::create()?;
     info!(path = ?monitor_pipe.path(), "monitor pipe created");
 
-    let log_file_path = db.logs.create_log_file(profile.name())?;
+    let monitor_pipe_path = monitor_pipe.path().normalize()?.into_path_buf();
+    let (telemetry_vars, log_file_path) =
+        common::build_telemetry_vars(&config, &db, profile.name(), monitor_pipe_path)?;
 
     info!(?log_file_path, "created log file");
 
@@ -419,16 +340,7 @@ pub fn launch(
     let launcher_vars = LauncherVars {
         exe: game_executable.as_ref().to_path_buf(),
         host_dll: dll_path,
-        host_config_path: attach_config_file.path().to_path_buf(),
-    };
-
-    let monitor_pipe_path = monitor_pipe.path().normalize()?.into_path_buf();
-
-    let telemetry_vars = TelemetryVars {
-        enabled: config.options.crash_reporting.unwrap_or_default(),
-        log_file_path: log_file_path.normalize()?.into_path_buf(),
-        monitor_pipe_path,
-        trace_id: me3_telemetry::trace_id(),
+        host_config_path: attach_config_path.to_path_buf(),
     };
 
     injector_command
