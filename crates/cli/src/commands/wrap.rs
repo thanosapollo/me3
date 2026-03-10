@@ -120,10 +120,7 @@ pub fn wrap(db: DbContext, config: Config, args: WrapArgs) -> color_eyre::Result
         &profile,
         &profile_options,
         config.cache_dir(),
-        &args.mod_args.packages,
-        &args.mod_args.natives,
-        args.mod_args.savefile.as_deref(),
-        args.mod_args.suspend,
+        &args.mod_args,
     )?;
 
     // On Unix, exec() replaces the process so the temp file is never cleaned up.

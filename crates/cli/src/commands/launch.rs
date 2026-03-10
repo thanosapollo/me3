@@ -99,10 +99,7 @@ impl LaunchArgs {
             &profile,
             &profile_options,
             config.cache_dir(),
-            &self.mod_args.packages,
-            &self.mod_args.natives,
-            self.mod_args.savefile.as_deref(),
-            self.mod_args.suspend,
+            &self.mod_args,
         )?;
 
         Ok(LaunchContext {

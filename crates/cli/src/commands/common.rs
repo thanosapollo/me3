@@ -156,24 +156,23 @@ pub(crate) fn generate_attach_config(
     profile: &Profile,
     profile_options: &ProfileOptions,
     cache_path: Option<Box<Path>>,
-    extra_packages: &[PathBuf],
-    extra_natives: &[PathBuf],
-    savefile: Option<&str>,
-    suspend: bool,
+    mod_args: &ModArgs,
 ) -> color_eyre::Result<AttachConfig> {
-    for path in extra_natives.iter().chain(extra_packages) {
+    for path in mod_args.natives.iter().chain(&mod_args.packages) {
         if !path.exists() {
             return Err(eyre!("{path:?} does not exist"));
         }
     }
 
-    let mut packages = extra_packages
+    let mut packages = mod_args
+        .packages
         .iter()
         .filter_map(|path| path.normalize().ok())
         .map(|normalized| Package::new(normalized.into_path_buf()))
         .collect::<Vec<_>>();
 
-    let mut natives = extra_natives
+    let mut natives = mod_args
+        .natives
         .iter()
         .filter_map(|path| path.normalize().ok())
         .map(|normalized| Native::new(normalized.into_path_buf()))
@@ -184,7 +183,9 @@ pub(crate) fn generate_attach_config(
     packages.extend(ordered_packages);
     natives.extend(ordered_natives);
 
-    let savefile = savefile
+    let savefile = mod_args
+        .savefile
+        .as_deref()
         .map(|s| s.to_owned())
         .or_else(|| profile.savefile());
 
@@ -211,7 +212,7 @@ pub(crate) fn generate_attach_config(
         early_natives,
         savefile,
         cache_path: cache_path.map(|path| path.into_path_buf()),
-        suspend,
+        suspend: mod_args.suspend,
         boot_boost: opts.boot_boost.unwrap_or(true),
         skip_logos: opts.skip_logos.unwrap_or(true),
         start_online: profile_options.start_online.unwrap_or(false),
