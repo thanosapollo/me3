@@ -35,14 +35,9 @@ modules:
         RUSTC_BOOTSTRAP: "1"
     build-commands:
       - cargo --offline build --release --locked --target x86_64-unknown-linux-gnu -p me3-cli
-      - install -Dm0755 target/x86_64-unknown-linux-gnu/release/me3 ${FLATPAK_DEST}/bin/me3-bin
-      - |
-        cat > ${FLATPAK_DEST}/bin/me3 <<'WRAPPER'
-        #!/bin/bash
-        /app/utils/me3/bin/me3-bin "$@"
-        exit $?
-        WRAPPER
-      - chmod 755 ${FLATPAK_DEST}/bin/me3
+      # No PID 1 wrapper needed: as a Steam Utility extension, me3 runs as a child
+      # of Steam's container, not as the entrypoint.
+      - install -Dm0755 target/x86_64-unknown-linux-gnu/release/me3 ${FLATPAK_DEST}/bin/me3
       - install -Dm0644 distribution/cross-platform/eldenring-default.me3 ${FLATPAK_DEST}/share/me3/profiles/eldenring-default.me3
       - install -Dm0644 distribution/cross-platform/nightreign-default.me3 ${FLATPAK_DEST}/share/me3/profiles/nightreign-default.me3
       - install -Dm0644 distribution/cross-platform/sekiro-default.me3 ${FLATPAK_DEST}/share/me3/profiles/sekiro-default.me3
